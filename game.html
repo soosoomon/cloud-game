@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>연성대 클라우드 서버 | AWS EC2 게임 데모</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #333;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .logo {
+            width: 100px;
+            margin-bottom: 10px;
+        }
+        
+        h1 {
+            color: white;
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+        
+        .subtitle {
+            color: #fff;
+            opacity: 0.8;
+            margin-bottom: 20px;
+        }
+        
+        .game-container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            max-width: 800px;
+            width: 100%;
+        }
+        
+        #gameCanvas {
+            border: 2px solid #1e3c72;
+            border-radius: 8px;
+            background: #f0f8ff;
+            margin: 20px auto;
+        }
+        
+        .controls {
+            margin: 20px 0;
+            font-size: 1.1em;
+            color: #333;
+        }
+        
+        .btn {
+            background: #1e3c72;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            background: #2a5298;
+            transform: translateY(-2px);
+        }
+        
+        .score-board {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin: 10px 0;
+            color: #1e3c72;
+        }
+        
+        .stage-indicator {
+            font-size: 1.2em;
+            color: #2a5298;
+            margin: 10px 0;
+        }
+        
+        .footer {
+            margin-top: 20px;
+            color: #fff;
+            opacity: 0.8;
+            font-size: 0.9em;
+        }
+        
+        #gameOverScreen {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+        
+        #gameOverScreen h2 {
+            color: #1e3c72;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="https://upload.wikimedia.org/wikipedia/commons/9/93/Amazon_Web_Services_Logo.svg" alt="AWS Logo" class="logo">
+        <h1>연성대 클라우드 서버</h1>
+        <p class="subtitle">AWS EC2 게임 서버 데모</p>
+    </header>
+    
+    <div class="game-container">
+        <h2>클라우드 점프 게임</h2>
+        <p class="controls">스페이스바로 점프하여 장애물을 피하세요!</p>
+        
+        <div class="stage-indicator">스테이지: <span id="stage">1</span> / 3</div>
+        <div class="score-board">점수: <span id="score">0</span></div>
+        
+        <canvas id="gameCanvas" width="600" height="200"></canvas>
+        
+        <button class="btn" id="startBtn">게임 시작</button>
+    </div>
+    
+    <div id="gameOverScreen">
+        <h2>게임 오버!</h2>
+        <p>최종 점수: <span id="finalScore">0</span></p>
+        <p>최종 스테이지: <span id="finalStage">1</span></p>
+        <button class="btn" id="restartBtn">다시 시작</button>
+    </div>
+    
+    <footer class="footer">
+        <p>연성대학교 클라우드 컴퓨팅 수업 | AWS EC2 게임 서버 데모</p>
+    </footer>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        const scoreElement = document.getElementById('score');
+        const stageElement = document.getElementById('stage');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScoreElement = document.getElementById('finalScore');
+        const finalStageElement = document.getElementById('finalStage');
+
+        // 게임 상태
+        let gameRunning = false;
+        let score = 0;
+        let stage = 1;
+        let gameSpeed = 5;
+        let obstacleInterval = 2000;
+        
+        // 플레이어 설정
+        const player = {
+            x: 50,
+            y: canvas.height - 30,
+            width: 20,
+            height: 30,
+            jumping: false,
+            jumpHeight: 80,
+            jumpVelocity: 0,
+            gravity: 0.5
+        };
+        
+        // 장애물 배열
+        let obstacles = [];
+        
+        // 이벤트 리스너
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !player.jumping && gameRunning) {
+                player.jumping = true;
+                player.jumpVelocity = -10;
+            }
+        });
+        
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', restartGame);
+        
+        function startGame() {
+            gameRunning = true;
+            score = 0;
+            stage = 1;
+            gameSpeed = 5;
+            obstacleInterval = 2000;
+            obstacles = [];
+            player.y = canvas.height - 30;
+            player.jumping = false;
+            startBtn.style.display = 'none';
+            gameOverScreen.style.display = 'none';
+            spawnObstacle();
+            gameLoop();
+        }
+        
+        function restartGame() {
+            gameOverScreen.style.display = 'none';
+            startGame();
+        }
+        
+        function gameLoop() {
+            if (!gameRunning) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            updatePlayer();
+            updateObstacles();
+            checkCollisions();
+            updateScore();
+            drawGame();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function updatePlayer() {
+            if (player.jumping) {
+                player.jumpVelocity += player.gravity;
+                player.y += player.jumpVelocity;
+                
+                if (player.y >= canvas.height - player.height) {
+                    player.y = canvas.height - player.height;
+                    player.jumping = false;
+                    player.jumpVelocity = 0;
+                }
+            }
+        }
+        
+        function updateObstacles() {
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].x -= gameSpeed;
+                
+                if (obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                    score += 10;
+                    
+                    // 스테이지 변경
+                    if (score % 100 === 0 && stage < 3) {
+                        stage++;
+                        gameSpeed += 2;
+                        obstacleInterval -= 300;
+                    }
+                }
+            }
+        }
+        
+        function checkCollisions() {
+            for (let obstacle of obstacles) {
+                if (player.x < obstacle.x + obstacle.width &&
+                    player.x + player.width > obstacle.x &&
+                    player.y < obstacle.y + obstacle.height &&
+                    player.y + player.height > obstacle.y) {
+                    gameOver();
+                }
+            }
+        }
+        
+        function updateScore() {
+            scoreElement.textContent = score;
+            stageElement.textContent = stage;
+        }
+        
+        function drawGame() {
+            // 플레이어 그리기
+            ctx.fillStyle = '#1e3c72';
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            
+            // 장애물 그리기
+            ctx.fillStyle = '#d32f2f';
+            for (let obstacle of obstacles) {
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            }
+            
+            // 바닥 그리기
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, canvas.height - 2, canvas.width, 2);
+        }
+        
+        function spawnObstacle() {
+            if (!gameRunning) return;
+            
+            const obstacle = {
+                x: canvas.width,
+                y: canvas.height - 40,
+                width: 20,
+                height: 40
+            };
+            
+            obstacles.push(obstacle);
+            
+            // 스테이지에 따라 다른 패턴
+            if (stage === 2) {
+                setTimeout(() => {
+                    if (gameRunning) {
+                        obstacles.push({
+                            x: canvas.width + 100,
+                            y: canvas.height - 30,
+                            width: 20,
+                            height: 30
+                        });
+                    }
+                }, 500);
+            } else if (stage === 3) {
+                setTimeout(() => {
+                    if (gameRunning) {
+                        obstacles.push({
+                            x: canvas.width + 80,
+                            y: canvas.height - 50,
+                            width: 20,
+                            height: 50
+                        });
+                    }
+                }, 300);
+            }
+            
+            setTimeout(spawnObstacle, obstacleInterval);
+        }
+        
+        function gameOver() {
+            gameRunning = false;
+            gameOverScreen.style.display = 'block';
+            finalScoreElement.textContent = score;
+            finalStageElement.textContent = stage;
+        }
+    </script>
+</body>
+</html>
